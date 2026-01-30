@@ -1,0 +1,32 @@
+SATHCHALO/
+│
+├── app/
+│   ├── api/                    # FastAPI layer
+│   │   ├── __init__.py
+│   │   ├── main.py             # FastAPI app
+│   │   └── routes/
+│   │       └── chat.py
+│   │
+│   ├── core/                   # LangChain core
+│   │   ├── llm.py
+│   │   ├── memory.py
+│   │   ├── state.py
+│   │   └── agent.py            # LangChain agent / LangGraph
+│   │
+│   ├── tools/                  # LangChain tools ONLY
+│   │   ├── amadeus.py
+│   │   ├── weather.py
+│   │   ├── flight_search.py
+│   │   ├── budget.py
+│   │   └── trip_info.py
+│   │
+│   ├── services/               # Business logic
+│   │   ├── travel_service.py
+│   │   └── planner.py
+│   │
+│   └── ui/
+│       └── streamlit_app.py
+│
+├── .env
+├── requirements.txt
+└── README.md
