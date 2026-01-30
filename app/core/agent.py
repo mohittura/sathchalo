@@ -1,15 +1,13 @@
 """
 Chat Agent Module
-LangChain agent with travel-focused tools.
+Simple travel assistant using LangChain and Groq LLM.
 """
 import os
 from dotenv import load_dotenv
 
-from langchain.agents import initialize_agent, AgentType
-from langchain.tools import Tool
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langchain_groq import ChatGroq
 
-from app.core.llm import get_llm
-from app.core.memory import get_memory
 from app.tools.weather import get_weather
 from app.tools.itenary import create_itinerary
 from app.tools.flight_search import search_flights
@@ -19,86 +17,126 @@ from app.tools.trip_info import get_trip_info
 # Load environment variables
 load_dotenv()
 
+# System prompt for the travel assistant
+SYSTEM_PROMPT = """You are SathChalo, a friendly and helpful travel assistant.
+
+Your job is to help users plan amazing trips! When users ask about travel, you should:
+1. Understand their query
+2. Use the appropriate tool to get information
+3. Provide a helpful, conversational response
+
+Available tools and when to use them:
+- WEATHER: When user asks about weather/climate in a city (call: get_weather)
+- ITINERARY: When user wants a travel plan for a destination (call: create_itinerary)
+- FLIGHTS: When user asks about flights between cities (call: search_flights)
+- BUDGET: When user asks about trip costs/budget (call: calculate_budget)
+- TRIPINFO: When user asks about a destination's info (call: get_trip_info)
+
+Be enthusiastic about travel! Use emojis appropriately. Provide helpful tips.
+If you're unsure which tool to use, ask clarifying questions.
+
+IMPORTANT: When responding, if you detect a tool should be used, I will call it for you.
+Just provide a natural, helpful response based on the context."""
+
 
 class ChatAgent:
     """
-    Travel Assistant Agent powered by LangChain.
-    Helps users plan trips, check weather, find flights, and more.
+    Travel Assistant using simple LLM with tool integration.
     """
     
     def __init__(self):
-        self.llm = get_llm()
-        self.memory = get_memory()
-        
-        # Define all available tools
-        self.tools = [
-            Tool(
-                name="Weather",
-                func=get_weather,
-                description="Get current weather for a city. Input: city name (e.g., 'Paris', 'Tokyo')"
-            ),
-            Tool(
-                name="Itinerary",
-                func=create_itinerary,
-                description="Create a travel itinerary. Input: destination and days (e.g., '3 day Paris itinerary')"
-            ),
-            Tool(
-                name="FlightSearch",
-                func=search_flights,
-                description="Search for flights. Input: route (e.g., 'Delhi to Paris', 'flights from Mumbai to London')"
-            ),
-            Tool(
-                name="Budget",
-                func=calculate_budget,
-                description="Calculate trip budget. Input: destination and days (e.g., 'budget for Tokyo 5 days')"
-            ),
-            Tool(
-                name="TripInfo",
-                func=get_trip_info,
-                description="Get destination information. Input: city name (e.g., 'Paris', 'Bali')"
-            )
-        ]
-        
-        # System message for the agent
-        system_message = """You are SathChalo, a friendly and helpful travel assistant. 
-        
-Your job is to help users plan amazing trips! You can:
-- Check weather conditions for any city
-- Create day-by-day itineraries
-- Search for flights between cities
-- Estimate trip budgets
-- Provide destination information and travel tips
-
-Be conversational, enthusiastic about travel, and always provide helpful suggestions.
-When users ask about a destination, proactively offer relevant information like weather, budget estimates, or top attractions.
-
-Always use the tools available to you to provide accurate, up-to-date information."""
-
-        # Initialize the agent
-        self.agent = initialize_agent(
-            tools=self.tools,
-            llm=self.llm,
-            agent=AgentType.CONVERSATIONAL_REACT_DESCRIPTION,
-            memory=self.memory,
-            verbose=True,
-            agent_kwargs={
-                "system_message": system_message
-            },
-            handle_parsing_errors=True
+        api_key = os.getenv("GROQ_API_KEY")
+        self.llm = ChatGroq(
+            api_key=api_key,
+            model="llama-3.3-70b-versatile",
+            temperature=0.7
         )
+        self.chat_history = []
+        
+        # Tool mapping
+        self.tools = {
+            "weather": get_weather,
+            "itinerary": create_itinerary,
+            "flights": search_flights,
+            "budget": calculate_budget,
+            "tripinfo": get_trip_info
+        }
+    
+    def _detect_and_call_tool(self, user_input: str) -> str:
+        """
+        Detect which tool to use based on user input and call it.
+        Returns tool result or empty string if no tool needed.
+        """
+        input_lower = user_input.lower()
+        
+        # Weather detection
+        if any(word in input_lower for word in ["weather", "temperature", "climate", "hot", "cold", "rain"]):
+            # Extract city - simple approach
+            words = user_input.split()
+            for i, word in enumerate(words):
+                if word.lower() in ["in", "for", "at"]:
+                    if i + 1 < len(words):
+                        city = " ".join(words[i+1:]).strip("?.!")
+                        return self.tools["weather"](city)
+            # If no city found, try the last word
+            city = words[-1].strip("?.!") if words else "Paris"
+            return self.tools["weather"](city)
+        
+        # Itinerary detection
+        if any(word in input_lower for word in ["itinerary", "plan", "trip", "days", "day"]):
+            return self.tools["itinerary"](user_input)
+        
+        # Flight detection
+        if any(word in input_lower for word in ["flight", "fly", "flights", "airline"]):
+            return self.tools["flights"](user_input)
+        
+        # Budget detection
+        if any(word in input_lower for word in ["budget", "cost", "expense", "price", "afford", "money"]):
+            return self.tools["budget"](user_input)
+        
+        # Trip info detection
+        if any(word in input_lower for word in ["tell me about", "info", "information", "about", "destination", "visit"]):
+            # Extract destination
+            for phrase in ["tell me about", "about", "info on", "information about"]:
+                if phrase in input_lower:
+                    dest = input_lower.split(phrase)[-1].strip().strip("?.!")
+                    return self.tools["tripinfo"](dest)
+            return self.tools["tripinfo"](user_input)
+        
+        return ""
     
     def run(self, user_input: str) -> str:
         """
-        Process user input and return agent response.
-        
-        Args:
-            user_input: The user's message
-            
-        Returns:
-            Agent's response string
+        Process user input and return response.
         """
         try:
-            response = self.agent.run(user_input)
-            return response
+            # Try to detect and call a tool
+            tool_result = self._detect_and_call_tool(user_input)
+            
+            # Build messages
+            messages = [SystemMessage(content=SYSTEM_PROMPT)]
+            
+            # Add chat history (last 6 messages)
+            for msg in self.chat_history[-6:]:
+                messages.append(msg)
+            
+            # Add current user message
+            if tool_result:
+                # Include tool result in the context
+                enhanced_input = f"User asked: {user_input}\n\nTool result:\n{tool_result}\n\nPlease provide a helpful response based on this information."
+                messages.append(HumanMessage(content=enhanced_input))
+            else:
+                messages.append(HumanMessage(content=user_input))
+            
+            # Get LLM response
+            response = self.llm.invoke(messages)
+            answer = response.content
+            
+            # Update chat history
+            self.chat_history.append(HumanMessage(content=user_input))
+            self.chat_history.append(AIMessage(content=answer))
+            
+            return answer
+            
         except Exception as e:
-            return f"I apologize, I encountered an error: {str(e)}. Please try rephrasing your question."
+            return f"I apologize, I encountered an error: {str(e)}. Please try again!"
